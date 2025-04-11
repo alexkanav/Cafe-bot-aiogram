@@ -1,6 +1,3 @@
-import httplib2
-import apiclient
-from oauth2client.service_account import ServiceAccountCredentials
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
@@ -10,42 +7,12 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher.filters import Text, IDFilter
 import requests
+
 from config import *
+from google_sheets import GoogleSheets
 
-
-def receive_menu_from_google():
-    global available_dishes_names, available_dishes_sizes, available_drinks_names, available_drinks_sizes
-    CREDENTIALS_FILE = 'my.json'  # private key file name
-    spredsheets_id = sheets_id  # Google sheet id
-    credentials = ServiceAccountCredentials.from_json_keyfile_name(
-        CREDENTIALS_FILE, ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    )
-    httpAuth = credentials.authorize(httplib2.Http())
-    service = apiclient.discovery.build('sheets', 'v4', http=httpAuth)
-
-    # read from google sheet
-    values = service.spreadsheets().values().get(
-        spreadsheetId=spredsheets_id,
-        range='B3:Z6',
-        majorDimension='ROWS'
-    ).execute()
-
-    available_dishes_names = values.get('values')[0]
-    available_dishes_sizes = values.get('values')[1]
-    available_drinks_names = values.get('values')[2]
-    available_drinks_sizes = values.get('values')[3]
-
-
-async def send_telegram(text: str):
-    token = tok  # telegram token
-    url = "https://api.telegram.org/bot"
-    channel_id = ch_id  # telegram channel id
-    url += token
-    method = url + "/sendMessage"
-    r = requests.post(method, data={"chat_id": channel_id, "text": text})
-
-    if r.status_code != 200:
-        raise Exception("post_text error")
+logger = logging.getLogger(__name__)
+orders = {}
 
 
 class OrderTable(StatesGroup):
@@ -68,6 +35,17 @@ class OrderDrinks(StatesGroup):
     waiting_for_drink_quantity = State()
 
 
+async def send_telegram(text: str):
+    token = telegram_token
+    url = f"https://api.telegram.org/bot{token}"
+    channel_id = telegram_channel_id
+    method = f"{url}/sendMessage"
+    r = requests.post(method, data={"chat_id": channel_id, "text": text})
+
+    if r.status_code != 200:
+        raise Exception("post text error")
+
+
 async def set_commands(bot: Bot):
     commands = [
         BotCommand(command="/table", description="Your table number"),
@@ -85,9 +63,9 @@ def register_handlers_common(dp: Dispatcher, admin_id: int):
     dp.register_message_handler(cmd_cancel, Text(equals="cancel", ignore_case=True), state="*")
     dp.register_message_handler(admin_command, IDFilter(user_id=admin_id), commands="admin")
     dp.register_message_handler(table_chosen, state=OrderTable.waiting_for_table_number)
-    dp.register_message_handler(select_f_d, state=OrderTable.waiting_for_dishes_or_drink)
+    dp.register_message_handler(select_dishes_drinks, state=OrderTable.waiting_for_dishes_or_drink)
     dp.register_message_handler(order, commands="order", state="*")
-    dp.register_message_handler(order2, state=OrderTable.waiting_for_order)
+    dp.register_message_handler(send_order, state=OrderTable.waiting_for_order)
 
 
 def register_handlers_dishes(dp: Dispatcher):
@@ -138,10 +116,10 @@ async def table_chosen(message: types.Message, state: FSMContext):
     orders[message['from']['id']]['dishes'] = {}
     orders[message['from']['id']]['drinks'] = {}
     await state.update_data(chosen_table=message.text.lower())
-    await chosen_f_d(message)
+    await chosen_dishes_drinks(message)
 
 
-async def chosen_f_d(message):
+async def chosen_dishes_drinks(message: types.Message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row('dishes', 'drinks')
     await message.answer("Select what you want to order: \n     /drinks   \n     /dishes  .",
@@ -149,32 +127,32 @@ async def chosen_f_d(message):
     await OrderTable.waiting_for_dishes_or_drink.set()
 
 
-async def select_f_d(message: types.Message, state):
-    res = message.text.lower()
-    if res == '/drinks':
-        await drinks_start(message)
-    elif res == '/dishes':
-        await dishes_start(message)
-    elif res == '/order':
-        await order(message)
-    elif res == '/cancel':
-        await cmd_cancel(message, state)
-    else:
-        await message.answer("Select what you want to order using the keyboard.")
-        await chosen_f_d(message)
-
-        return
+async def select_dishes_drinks(message: types.Message, state):
+    match message.text.lower():
+        case '/drinks':
+            await drinks_start(message)
+        case '/dishes':
+            await dishes_start(message)
+        case '/order':
+            await order(message)
+        case '/cancel':
+            await cmd_cancel(message, state)
+        case _:
+            await message.answer("Select what you want to order using the keyboard.")
+            await chosen_dishes_drinks(message)
+            return
 
 
 async def order(message: types.Message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row('send', 'cancel')
-    await message.answer(f"You ordered:{orders[message['from']['id']]['dishes']} , {orders[message['from']['id']]['drinks']}")
+    await message.answer(
+        f"You ordered:{orders[message['from']['id']]['dishes']} , {orders[message['from']['id']]['drinks']}")
     await message.answer("Check and submit your order:\n   /send\n   /cancel", reply_markup=keyboard)
     await OrderTable.waiting_for_order.set()
 
 
-async def order2(message: types.Message, state):
+async def send_order(message: types.Message, state):
     if message.text.lower() == 'cancel' or message.text.lower() == '/cancel':
         await cmd_cancel(message, state)
     elif message.text.lower() == 'send' or message.text.lower() == '/send':
@@ -184,20 +162,19 @@ async def order2(message: types.Message, state):
         await state.finish()
     else:
         await message.answer("Make your choice using the keyboard")
-
         return
 
 
 async def dishes_start(message: types.Message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for name in available_dishes_names:
+    for name in GoogleSheets.menu[0][0]:  # dishes names
         keyboard.add(name)
     await message.answer("Select dish:", reply_markup=keyboard)
     await OrderDishes.waiting_for_dishes_name.set()
 
 
 async def dishes_chosen(message: types.Message, state: FSMContext):
-    if message.text.lower() not in available_dishes_names:
+    if message.text.lower() not in GoogleSheets.menu[0][0]:  # dishes names
         await message.answer("Please select a dish using the keyboard below.")
         await dishes_start(message)
         return
@@ -208,14 +185,14 @@ async def dishes_chosen(message: types.Message, state: FSMContext):
 
 async def dishes_size_chosen(message: types.Message, state: FSMContext):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for size in available_dishes_sizes:
+    for size in GoogleSheets.menu[0][1]:  # dishes_sizes
         keyboard.add(size)
     await message.answer("Now select your serving size:", reply_markup=keyboard)
     await OrderDishes.waiting_for_dishes_size.set()
 
 
 async def dishes_size_set(message: types.Message, state: FSMContext):
-    if message.text.lower() not in available_dishes_sizes:
+    if message.text.lower() not in GoogleSheets.menu[0][1]:  # dishes sizes
         await message.answer("Please select your serving size using the keyboard below.")
         await dishes_size_chosen(message, state)
         return
@@ -226,32 +203,34 @@ async def dishes_size_set(message: types.Message, state: FSMContext):
 
 
 async def dishes_quantity(message: types.Message, state: FSMContext):
-    if message.text.lower() not in available_quantity:
+    if message.text.lower() not in GoogleSheets.menu[0][4]:  # available quantity
         await message.answer("Enter the correct quantity using numbers from 1 to 10.")
         return
 
     await state.update_data(dishes_quantity=message.text.lower())
     user_data = await state.get_data()
-    orders[message['from']['id']]['dishes'].update({f"{user_data['chosen_dishes']}-{user_data['chosen_dishes_size']}": f"{user_data['dishes_quantity']}"})
+    orders[message['from']['id']]['dishes'].update(
+        {f"{user_data['chosen_dishes']}-{user_data['chosen_dishes_size']}": f"{user_data['dishes_quantity']}"})
     user_data = await state.get_data()
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row('dishes', 'drinks', 'apply')
     keyboard.add('cancel')
-    await message.answer(f"You ordered {message.text.lower()} servings {user_data['chosen_dishes']}-{user_data['chosen_dishes_size']}.\n"
-                         f"Order more \n  /dishes \n   /drinks \n   /order\n   /cancel", reply_markup=keyboard)
+    await message.answer(
+        f"You ordered {message.text.lower()} servings {user_data['chosen_dishes']}-{user_data['chosen_dishes_size']}.\n"
+        f"Order more \n  /dishes \n   /drinks \n   /order\n   /cancel", reply_markup=keyboard)
     await OrderTable.waiting_for_dishes_or_drink.set()
 
 
 async def drinks_start(message: types.Message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for name in available_drinks_names:
+    for name in GoogleSheets.menu[0][2]:  # drinks names
         keyboard.add(name)
     await message.answer("Choose a drink:", reply_markup=keyboard)
     await OrderDrinks.waiting_for_drink_name.set()
 
 
 async def drinks_chosen(message: types.Message, state: FSMContext):
-    if message.text.lower() not in available_drinks_names:
+    if message.text.lower() not in GoogleSheets.menu[0][2]:  # drinks names
         await message.answer("Please select a drink using the keyboard below.")
         await drinks_start(message)
         return
@@ -262,14 +241,14 @@ async def drinks_chosen(message: types.Message, state: FSMContext):
 
 async def drinks_size_chosen(message: types.Message, state: FSMContext):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    for size in available_drinks_sizes:
+    for size in GoogleSheets.menu[0][3]:  # drinks sizes
         keyboard.add(size)
     await message.answer("Now select the drink volume:", reply_markup=keyboard)
     await OrderDrinks.waiting_for_drink_size.set()
 
 
 async def drinks_size_set(message: types.Message, state: FSMContext):
-    if message.text.lower() not in available_drinks_sizes:
+    if message.text.lower() not in GoogleSheets.menu[0][3]:  # drinks sizes
         await message.answer("Please select serving size, using the keyboard below.")
         await drinks_size_chosen(message, state)
         return
@@ -280,20 +259,22 @@ async def drinks_size_set(message: types.Message, state: FSMContext):
 
 
 async def drink_quantity(message: types.Message, state: FSMContext):
-    if message.text.lower() not in available_quantity:
+    if message.text.lower() not in GoogleSheets.menu[0][4]:  # available quantity
         await message.answer("Enter the correct quantity using numbers from 1 to 10.")
         return
 
     await state.update_data(drink_quantity=message.text.lower())
     user_data = await state.get_data()
-    orders[message['from']['id']]['drinks'].update({f"{user_data['chosen_drink']}-{user_data['chosen_drink_size']}": f"{user_data['drink_quantity']}"})
+    orders[message['from']['id']]['drinks'].update(
+        {f"{user_data['chosen_drink']}-{user_data['chosen_drink_size']}": f"{user_data['drink_quantity']}"})
     user_data = await state.get_data()
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
     keyboard.row('dishes', 'drinks', 'apply')
     keyboard.add('cancel')
-    await message.answer(f"You ordered {message.text.lower()} servings {user_data['chosen_drink']}-{user_data['chosen_drink_size']}.\n"
-                         f"Order more \n   /dishes\n    /drinks, \n    /order\n   /cancel",
-                         reply_markup=keyboard)
+    await message.answer(
+        f"You ordered {message.text.lower()} servings {user_data['chosen_drink']}-{user_data['chosen_drink_size']}.\n"
+        f"Order more \n   /dishes\n    /drinks, \n    /order\n   /cancel",
+        reply_markup=keyboard)
     await OrderTable.waiting_for_dishes_or_drink.set()
 
 
@@ -305,6 +286,9 @@ async def main():
     )
     logger.error("Starting bot")
 
+    sheets = GoogleSheets(key_file)
+    sheets.receive_from_google_sheet(sheets_id, cell_range)
+
     bot = Bot(token=bot_token)  # telegram token
     dp = Dispatcher(bot, storage=MemoryStorage())
     adm_id = admin_id  # administrator id in telegram
@@ -312,13 +296,10 @@ async def main():
     register_handlers_common(dp, adm_id)
     register_handlers_drinks(dp)
     register_handlers_dishes(dp)
-
     await set_commands(bot)
     await dp.skip_updates()
     await dp.start_polling()
 
 
-receive_menu_from_google()
-logger = logging.getLogger(__name__)
-
-asyncio.run(main())
+if __name__ == '__main__':
+    asyncio.run(main())
