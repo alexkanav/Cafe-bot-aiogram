@@ -69,6 +69,6 @@ async def order(message: Message, state: FSMContext, db):
         remove_keyboard = types.ReplyKeyboardRemove()
         await message.answer("Thanks.", reply_markup=remove_keyboard)
         await message.answer(f"✅ Order placed! ID: {order_id}")
-        await send_to_telegram(f"ID: {order_id} Order: {order_data}")
+        await send_to_telegram(f"ID: {order_id} Order: {order_data}", TELEGRAM_TOKEN, TELEGRAM_CHANNEL_ID)
     await state.clear()
 
