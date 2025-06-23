@@ -49,7 +49,7 @@ async def chosen_foods_drinks(message: Message, state: FSMContext):
     buttons = [[KeyboardButton(text="/foods"), KeyboardButton(text="/drinks")]]
     keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
     await message.answer(
-        "What would you like to order?\n   /drinks\n   /foods",
+        "What would you like to order?\n  /drinks\n  /foods",
         reply_markup=keyboard
     )
 
