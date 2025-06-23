@@ -29,10 +29,7 @@ A fully functional Telegram bot for ordering food and drinks in a cafe, built wi
 ## Setup
 
 ### 1. Clone and Install
-<<<<<<< HEAD
 
-=======
->>>>>>> origin/main
     git clone https://github.com/alexkanav/Cafe-bot-aiogram
     
     cd cafe-bot-aiogram
@@ -52,9 +49,9 @@ A fully functional Telegram bot for ordering food and drinks in a cafe, built wi
     python main.py
 
 ---
-## License
-MIT License. Free for personal and commercial use. Credit appreciated!
-<<<<<<< HEAD
 
-=======
->>>>>>> origin/main
+## License
+
+MIT License. Free for personal and commercial use. Credit appreciated!
+
+
