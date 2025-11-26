@@ -7,7 +7,7 @@ A fully functional Telegram bot for ordering food and drinks in a cafe, built wi
 ## Features
 
 ### Display full cafe menu
-Includes food and drinks, organized into categories.
+- Includes food and drinks, organized into categories.
 
 ### Take and process customer orders 
 - Users can browse the menu, add items, and confirm their order directly in Telegram.
